@@ -1,0 +1,26 @@
+[package]
+name = "arpeggio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+dns-lookup = "4.0.2"
+futures = "0.3.34"
+hickory-proto = { version = "0.26.3", features = ["mdns"] }
+ipnetwork = "0.21.1"
+netdev = "0.46.3"
+regex = "1.13.1"
+rlimit = "0.11.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.2", features = ["full"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+x509-parser = "0.18.1"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_Foundation"] }
+
+[target.'cfg(not(windows))'.dependencies]
+pnet = "0.35.0"

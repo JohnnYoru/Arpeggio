@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arpeggio Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.34.3/cytoscape.min.js"></script>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #1a1a1a; --surface: #202020; --surface-2: #262626; --border: #333333; --border-strong: #4a4a4a;
+    --text: #ededed; --text-2: #c8c8c8; --muted: #8a8a8a; --faint: #5c5c5c;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans); display: flex; flex-direction: column; -webkit-font-smoothing: antialiased; }
+  button, input { font: inherit; color: inherit; }
+  ::selection { background: #ededed33; }
+
+  header { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .brand { font-weight: 600; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .brand svg { width: 18px; height: 18px; }
+  .meta { flex: 1; min-width: 0; display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .meta span { border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+  .meta b { color: var(--text-2); font-weight: 400; font-family: var(--mono); font-size: 11.5px; }
+  .actions { display: flex; gap: 8px; margin-left: auto; }
+  .search { width: 240px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); outline: none; }
+  .search::placeholder { color: var(--faint); }
+  .search:focus { border-color: var(--border-strong); }
+  .btn { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--text); color: var(--bg); font-weight: 500; cursor: pointer; white-space: nowrap; }
+  .btn:hover { background: #ffffff; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+  #graph { flex: 1; min-width: 0; position: relative; background: radial-gradient(circle at center, #1f1f1f 0%, var(--bg) 70%); }
+  #cy { position: absolute; inset: 0; }
+  aside { width: 400px; max-width: 100%; border-left: 1px solid var(--border); overflow-y: auto; padding: 18px; background: var(--bg); }
+
+  .legend { position: absolute; left: 14px; bottom: 14px; display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+  .zoomhint { position: absolute; right: 14px; bottom: 14px; font-size: 11.5px; color: var(--faint); }
+
+  #drop { position: absolute; inset: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px dashed var(--border-strong); border-radius: 12px; color: var(--muted); text-align: center; cursor: pointer; padding: 16px; transition: border-color .15s, background .15s; }
+  #drop.over { border-color: var(--text); background: #ffffff06; color: var(--text-2); }
+  #drop strong { color: var(--text); font-size: 15px; font-weight: 600; }
+  code { font-family: var(--mono); font-size: 11.5px; border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; color: var(--text-2); }
+
+  h2 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -0.015em; word-break: break-word; }
+  h3 { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 22px 0 8px; font-weight: 600; }
+  .sub { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-top: 2px; }
+  .back { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; margin-bottom: 12px; font-size: 12px; }
+  .back:hover { color: var(--text); }
+  .head { display: flex; gap: 12px; align-items: center; }
+  .head .icon { width: 40px; height: 40px; flex: none; border-radius: 50%; border: 1px solid var(--border-strong); display: grid; place-items: center; background: var(--surface-2); }
+  .head .icon img { width: 20px; height: 20px; }
+
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+  .badge { font-size: 11px; border-radius: 5px; padding: 1px 7px; border: 1px solid var(--border); color: var(--muted); }
+  .badge.strong { color: var(--text); border-color: var(--border-strong); }
+
+  dl { display: grid; grid-template-columns: 90px 1fr; gap: 7px 12px; margin: 0; }
+  dt { color: var(--muted); font-size: 12px; }
+  dd { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--text-2); word-break: break-all; }
+  dd .none { color: var(--faint); font-family: var(--sans); }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .stat { background: var(--bg); padding: 10px 12px; }
+  .stat b { display: block; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 11.5px; }
+
+  .hosts { list-style: none; margin: 0 -8px; padding: 0; }
+  .hosts li { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 6px; cursor: pointer; }
+  .hosts li:hover { background: var(--surface-2); }
+  .hosts li.off { opacity: 0.5; }
+  .hosts img { width: 16px; height: 16px; flex: none; }
+  .hosts .name { flex: 1; min-width: 0; }
+  .hosts .name div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hosts .ip { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
+  .count { font-family: var(--mono); font-size: 11.5px; color: var(--muted); min-width: 2ch; text-align: right; }
+
+  .card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--surface); }
+  .card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .port { font-family: var(--mono); font-weight: 600; font-size: 12.5px; }
+  .svc { font-weight: 600; }
+  .ver { color: var(--muted); font-size: 12px; }
+  .tag { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; border-radius: 4px; padding: 0 5px; border: 1px solid var(--border-strong); color: var(--text-2); }
+  .tag.guess { border-style: dashed; border-color: var(--faint); color: var(--muted); font-weight: 400; }
+  .info { font-size: 12px; margin-top: 4px; color: var(--text-2); word-break: break-word; }
+  .kv { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 4px; word-break: break-all; }
+  details { margin-top: 6px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 11.5px; }
+  summary:hover { color: var(--text-2); }
+  pre { font-family: var(--mono); font-size: 11px; white-space: pre-wrap; word-break: break-all; margin: 6px 0 0; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text-2); }
+  .empty { color: var(--muted); }
+  .hidden { display: none !important; }
+
+  aside::-webkit-scrollbar { width: 10px; }
+  aside::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; border: 3px solid var(--bg); }
+
+  @media (max-width: 760px) {
+    main { flex-direction: column; }
+    #graph { min-height: 55vh; }
+    aside { width: 100%; border-left: none; border-top: 1px solid var(--border); }
+    .meta, .actions { flex-basis: 100%; }
+    .search { flex: 1; width: auto; }
+    .zoomhint { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#ededed" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="12" r="2.5"/><circle cx="12" cy="12" r="9" stroke-dasharray="2 3"/></svg>
+    Arpeggio
+  </div>
+  <div class="meta" id="meta"></div>
+  <div class="actions">
+    <input class="search hidden" id="search" type="search" placeholder="Filter: IP, name, service, vendor…">
+    <button class="btn" id="open">Open JSON</button>
+    <input type="file" id="file" accept=".json,application/json" hidden>
+  </div>
+</header>
+<main>
+  <div id="graph">
+    <div id="cy"></div>
+    <div id="drop">
+      <strong>Drop a Arpeggio JSON file here</strong>
+      <div>or click to browse</div>
+      <div><code>arpeggio -o scan.json</code></div>
+    </div>
+    <div class="legend hidden" id="legend">
+      <span><i class="swatch" style="background:#ededed"></i>Gateway</span>
+      <span><i class="swatch" style="border:1.5px solid #ededed"></i>This machine</span>
+      <span><i class="swatch" style="background:#262626;border:1px solid #5c5c5c"></i>Online</span>
+      <span><i class="swatch" style="border:1px dashed #5c5c5c"></i>Offline (cache only)</span>
+    </div>
+    <div class="zoomhint hidden" id="zoomhint">Scroll to zoom · drag to pan · click a node</div>
+  </div>
+  <aside id="panel"><p class="empty">No scan loaded.</p></aside>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const ipNum = (ip) => ip.split(".").reduce((a, o) => a * 256 + Number(o), 0);
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+const C = { bg: "#1a1a1a", surface: "#262626", text: "#ededed", text2: "#c8c8c8", muted: "#8a8a8a", faint: "#5c5c5c", edge: "#333333", edgeHi: "#8a8a8a" };
+
+const SOURCE = {
+  arp_cache: "ARP cache", arp_scan: "ARP sweep", arp_resolve: "ARP (resolved)", tcp_ping: "TCP ping",
+  dhcp_lease: "DHCP lease", dhcp_client_lease: "DHCP (client lease)", hosts_file: "hosts file",
+  rdns: "reverse DNS", mdns: "mDNS", mdns_browse: "mDNS services", netbios: "NetBIOS",
+  tls_cert: "TLS certificate", port_scan: "port scan", route: "default route", self: "local interface",
+};
+
+// ---------- icons (24×24 stroke glyphs) ----------
+const GLYPHS = {
+  router:  '<rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 16.5h.01M10.5 16.5h.01M15 13V9.5"/><path d="M12.2 7.2a4 4 0 0 1 5.6 0M9.8 4.8a7.4 7.4 0 0 1 10.4 0"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16v4"/>',
+  phone:   '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
+  printer: '<path d="M7 9V3.5h10V9"/><rect x="3" y="9" width="18" height="8" rx="2"/><rect x="7" y="14" width="10" height="6.5" rx="1"/>',
+  tv:      '<rect x="2.5" y="6" width="19" height="13" rx="2"/><path d="M8.5 2.5 12 6l3.5-3.5"/>',
+  device:  '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+};
+const KIND_LABEL = { router: "Network device", monitor: "Computer", phone: "Phone / tablet", printer: "Printer", tv: "TV / media", device: "Device" };
+
+function iconUri(kind, color) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${GLYPHS[kind]}</svg>`;
+  return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+}
+
+// Best-effort guess from what the scan found; only drives the icon.
+function deviceKind(d) {
+  if (d.type === "gateway") return "router";
+  if (d.type === "self") return "monitor";
+  const names = (d.hostnames || []).join(" ").toLowerCase();
+  const vendor = (d.vendor || "").toLowerCase();
+  const ports = new Set((d.ports || []).map((p) => p.port));
+  const svcs = (d.mdns_services || []).map((s) => s.service.toLowerCase()).join(" ");
+  if (/_ipp|_printer|_pdl-datastream|_scanner/.test(svcs) || [515, 631, 9100].some((p) => ports.has(p))) return "printer";
+  if (/_googlecast|_airplay|_raop|_spotify|_androidtvremote/.test(svcs) || /chromecast|\btv\b|roku|firetv|bravia|webos/.test(names)) return "tv";
+  if (/android|iphone|ipad|galaxy|pixel|poco|redmi|xiaomi|moto|oneplus/.test(names) || vendor.startsWith("randomized")) return "phone";
+  if (/zyxel|tp-?link|ubiquiti|mikrotik|netgear|cisco|aruba|d-link|tenda|linksys|juniper/.test(vendor)) return "router";
+  if ([22, 445, 3389, 5900].some((p) => ports.has(p)) || /_ssh|_smb|_rfb|_workstation|_kdeconnect/.test(svcs)) return "monitor";
+  return "device";
+}
+
+let cy = null, scan = null;
+
+// ---------- loading ----------
+function load(json) {
+  if (!json?.elements?.nodes) throw new Error("this doesn't look like Arpeggio output");
+  scan = json;
+  $("drop").classList.add("hidden");
+  ["legend", "search", "zoomhint"].forEach((id) => $(id).classList.remove("hidden"));
+  $("search").value = "";
+  renderMeta();
+  document.fonts.ready.then(() => { renderGraph(); showOverview(); });
+}
+
+function readFile(file) {
+  file.text().then((t) => load(JSON.parse(t))).catch((e) => alert("Could not load file: " + e.message));
+}
+
+$("open").onclick = () => $("file").click();
+$("drop").onclick = () => $("file").click();
+$("file").onchange = (e) => e.target.files[0] && readFile(e.target.files[0]);
+["dragenter", "dragover"].forEach((t) => document.addEventListener(t, (e) => { e.preventDefault(); $("drop").classList.add("over"); }));
+["dragleave", "drop"].forEach((t) => document.addEventListener(t, (e) => { e.preventDefault(); $("drop").classList.remove("over"); }));
+document.addEventListener("drop", (e) => e.dataTransfer.files[0] && readFile(e.dataTransfer.files[0]));
+
+// ?src=scan.json loads a file served next to this page.
+const src = new URLSearchParams(location.search).get("src");
+if (src) fetch(src).then((r) => r.json()).then(load).catch((e) => alert(`Could not load ${src}: ${e.message}`));
+
+// ---------- header ----------
+function renderMeta() {
+  const s = scan.scan || {};
+  const when = s.started_at ? new Date(s.started_at * 1000).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : null;
+  const secs = s.finished_at && s.started_at ? s.finished_at - s.started_at : null;
+  const dur = secs == null ? "" : secs >= 60 ? ` · ${Math.floor(secs / 60)}m ${secs % 60}s` : ` · ${secs}s`;
+  const items = [
+    ["Network", s.cidr], ["Interface", s.interface], ["Gateway", s.gateway || "—"],
+    ["Discovery", { arp: "ARP", tcp: "TCP ping" }[s.discovery] || s.discovery],
+    ["Ports", s.top_ports ? `top ${s.top_ports}` : null], ["Scanned", when && when + dur],
+  ];
+  $("meta").innerHTML = items.filter(([, v]) => v).map(([k, v]) => `<span>${k} <b>${esc(v)}</b></span>`).join("");
+}
+
+// ---------- graph ----------
+function hosts() {
+  return scan.elements.nodes.map((n) => n.data).filter((d) => d.type !== "subnet").sort((a, b) => ipNum(a.ip) - ipNum(b.ip));
+}
+
+function nodeData(d) {
+  if (d.type === "subnet") return { ...d, display: d.label, w: d.label.length * 7.6 + 30, h: 30 };
+  const kind = deviceKind(d);
+  const offline = d.status !== "online";
+  const iconColor = d.type === "gateway" ? C.bg : offline ? C.faint : C.text2;
+  const size = d.type === "gateway" ? 48 : 40;
+  return { ...d, kind, display: d.label === d.ip ? d.ip : `${d.label}\n${d.ip}`, icon: iconUri(kind, iconColor), w: size, h: size };
+}
+
+const STYLE = [
+  { selector: "node", style: {
+    "width": "data(w)", "height": "data(h)", "shape": "ellipse",
+    "background-color": C.surface, "border-width": 1, "border-color": C.faint,
+    "background-image": "data(icon)", "background-width": "48%", "background-height": "48%",
+    "label": "data(display)", "color": C.text2, "font-family": "Inter, system-ui, sans-serif", "font-size": 10.5,
+    "text-valign": "bottom", "text-margin-y": 7, "text-wrap": "wrap", "text-max-width": 170, "line-height": 1.35,
+    "min-zoomed-font-size": 7,
+    "underlay-color": C.text, "underlay-opacity": 0, "underlay-padding": 7, "underlay-shape": "ellipse",
+    "transition-property": "underlay-opacity, opacity", "transition-duration": "120ms",
+  } },
+  { selector: 'node[type="gateway"]', style: { "background-color": C.text, "border-color": C.text, "font-weight": 600, "color": C.text } },
+  { selector: 'node[type="self"]', style: { "background-color": C.bg, "border-width": 2, "border-color": C.text, "color": C.text } },
+  { selector: 'node[type="subnet"]', style: {
+    "shape": "round-rectangle", "background-color": C.bg, "border-color": C.faint, "background-image": "none",
+    "text-valign": "center", "text-margin-y": 0, "font-family": "JetBrains Mono, monospace", "font-size": 11.5, "color": C.text,
+    "underlay-shape": "round-rectangle",
+  } },
+  { selector: 'node[status="offline"]', style: { "background-color": C.bg, "border-style": "dashed", "border-color": C.faint, "color": C.muted } },
+  { selector: "node.hover", style: { "underlay-opacity": 0.06 } },
+  { selector: "node:selected", style: { "underlay-opacity": 0.14, "border-color": C.text, "border-width": 1.5 } },
+  { selector: 'node[type="self"]:selected', style: { "border-width": 2 } },
+  { selector: "edge", style: { "width": 1, "line-color": C.edge, "curve-style": "straight", "transition-property": "line-color, opacity", "transition-duration": "120ms" } },
+  { selector: "edge.hl", style: { "line-color": C.edgeHi } },
+  { selector: ".faded", style: { "opacity": 0.1 } },
+];
+
+const RING = 16; // hosts per ring; larger networks get more concentric rings
+
+function renderGraph() {
+  // Gateway and this machine first (inner ring), then everything else by IP.
+  const order = hosts().sort((a, b) => (a.type === "host") - (b.type === "host"));
+  const ring = new Map(order.map((h, i) => [h.id, Math.floor(i / RING)]));
+  const elements = { nodes: scan.elements.nodes.map(({ data }) => ({ data: nodeData(data) })), edges: scan.elements.edges };
+  if (cy) cy.destroy();
+  cy = cytoscape({
+    container: $("cy"), elements, style: STYLE, minZoom: 0.15, maxZoom: 4, boxSelectionEnabled: false,
+    // Render at ≥2× density so labels stay crisp on 1× and fractional-scaling displays.
+    pixelRatio: Math.max(2, window.devicePixelRatio || 1),
+    layout: {
+      name: "concentric", padding: 48, minNodeSpacing: 52, levelWidth: () => 1, animate: false,
+      // Star: the subnet in the middle, hosts on rings around it.
+      concentric: (n) => (n.data("type") === "subnet" ? 1 : -ring.get(n.id())),
+    },
+  });
+  if (cy.zoom() > 1.3) { cy.zoom(1.3); cy.center(); }
+
+  cy.on("mouseover", "node", (e) => { e.target.addClass("hover"); $("cy").style.cursor = "pointer"; });
+  cy.on("mouseout", "node", (e) => { e.target.removeClass("hover"); $("cy").style.cursor = ""; });
+  cy.on("tap", "node", (e) => (e.target.data("type") === "subnet" ? showOverview() : showHost(e.target.id())));
+  cy.on("tap", (e) => { if (e.target === cy) showOverview(); });
+}
+
+// Cytoscape's built-in wheel zoom moves ~3% per mouse-wheel notch. Replace it with a steady
+// exponential step: ~20% per notch on a mouse, proportional (smooth) on touchpads and pinch.
+$("graph").addEventListener("wheel", (e) => {
+  if (!cy) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1;
+  const delta = Math.max(-200, Math.min(200, e.deltaY * unit));
+  const k = e.ctrlKey ? 0.01 : 0.0015; // ctrl+wheel = touchpad pinch, which reports small deltas
+  const rect = $("cy").getBoundingClientRect();
+  cy.zoom({ level: cy.zoom() * Math.exp(-delta * k), renderedPosition: { x: e.clientX - rect.left, y: e.clientY - rect.top } });
+}, { capture: true, passive: false });
+
+// ---------- search ----------
+$("search").addEventListener("input", (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  cy.batch(() => {
+    cy.nodes().forEach((n) => {
+      const d = n.data();
+      const hay = [d.ip, d.mac, d.vendor, KIND_LABEL[d.kind], ...(d.hostnames || []),
+        ...(d.ports || []).flatMap((p) => [String(p.port), p.service, p.product, p.info]),
+        ...(d.mdns_services || []).flatMap((s) => [s.instance, s.service])].join(" ").toLowerCase();
+      n.toggleClass("faded", Boolean(q) && d.type !== "subnet" && !hay.includes(q));
+    });
+    cy.edges().forEach((ed) => ed.toggleClass("faded", ed.source().hasClass("faded")));
+  });
+});
+
+// ---------- side panel ----------
+function select(node) {
+  cy.elements().unselect().removeClass("hl");
+  if (node) { node.select(); node.connectedEdges().addClass("hl"); }
+}
+
+function showOverview() {
+  select(null);
+  const list = hosts();
+  const online = list.filter((h) => h.status === "online").length;
+  const ports = list.reduce((a, h) => a + (h.open_ports || 0), 0);
+  $("panel").innerHTML = `
+    <h2>${esc(scan.scan?.cidr || "Subnet")}</h2>
+    <div class="sub">${plural(list.length, "known host")}</div>
+    <h3>Summary</h3>
+    <div class="stats">
+      <div class="stat"><b>${online}</b><span>online</span></div>
+      <div class="stat"><b>${list.length - online}</b><span>cache only</span></div>
+      <div class="stat"><b>${ports}</b><span>open ports</span></div>
+    </div>
+    <h3>Hosts</h3>
+    <ul class="hosts">${list.map((h) => {
+      const kind = cy.getElementById(h.id).data("kind");
+      return `<li data-id="${esc(h.id)}" class="${h.status === "online" ? "" : "off"}" title="${esc(KIND_LABEL[kind])}">
+        <img src="${iconUri(kind, h.type === "gateway" || h.type === "self" ? C.text : C.muted)}" alt="">
+        <div class="name"><div>${esc(h.label)}</div><div class="ip">${esc(h.ip)}${h.vendor ? " · " + esc(h.vendor) : ""}</div></div>
+        <span class="count" title="open ports">${h.open_ports || 0}</span>
+      </li>`;
+    }).join("")}
+    </ul>`;
+  $("panel").querySelectorAll("li[data-id]").forEach((li) => (li.onclick = () => showHost(li.dataset.id)));
+}
+
+function portCard(p) {
+  const ver = [p.product, p.version].filter(Boolean).join(" ");
+  const cert = p.cert && (p.cert.subject_cn || p.cert.sans?.length)
+    ? `<div class="kv">cert ${esc(p.cert.subject_cn || "—")}${p.cert.sans?.length ? " · SAN " + esc(p.cert.sans.join(", ")) : ""}</div>` : "";
+  return `<div class="card">
+    <div class="card-head">
+      <span class="port">${p.port}/${esc(p.protocol)}</span>
+      <span class="svc">${esc(p.service)}</span>
+      ${ver ? `<span class="ver">${esc(ver)}</span>` : ""}
+      ${p.tls ? '<span class="tag">TLS</span>' : ""}
+      ${p.detection === "port-table" ? '<span class="tag guess" title="Inferred from the port number; not confirmed on the wire">guess</span>' : ""}
+    </div>
+    ${p.info ? `<div class="info">${esc(p.info)}</div>` : ""}
+    ${cert}
+    ${p.banner ? `<details><summary>Banner</summary><pre>${esc(p.banner)}</pre></details>` : ""}
+  </div>`;
+}
+
+function mdnsCard(s) {
+  return `<div class="card">
+    <div class="card-head">
+      <span class="svc">${esc(s.instance)}</span>
+      <span class="ver">${esc(s.service)}${s.port ? " · port " + s.port : ""}</span>
+    </div>
+    ${s.target ? `<div class="kv">${esc(s.target)}</div>` : ""}
+    ${s.txt?.length ? `<details><summary>TXT records (${s.txt.length})</summary><pre>${esc(s.txt.join("\n"))}</pre></details>` : ""}
+  </div>`;
+}
+
+function showHost(id) {
+  const node = cy.getElementById(id);
+  const h = node.data();
+  select(node);
+
+  const role = { gateway: "Gateway", self: "This machine" }[h.type];
+  const names = (h.hostnames || []).map(esc).join("<br>") || '<span class="none">none found</span>';
+  const sources = (h.sources || []).map((s) => `<span class="badge">${esc(SOURCE[s] || s)}</span>`).join("");
+  const ports = h.ports || [], svcs = h.mdns_services || [];
+
+  $("panel").innerHTML = `
+    <button class="back" id="back">← All hosts</button>
+    <div class="head">
+      <div class="icon"><img src="${iconUri(h.kind, C.text)}" alt=""></div>
+      <div><h2>${esc(h.label)}</h2><div class="sub">${esc(h.ip)}</div></div>
+    </div>
+    <div class="badges">
+      ${role ? `<span class="badge strong">${role}</span>` : ""}
+      <span class="badge ${h.status === "online" ? "strong" : ""}">${h.status === "online" ? "Online" : "Offline · cache only"}</span>
+      <span class="badge">${esc(KIND_LABEL[h.kind])}</span>
+      <span class="badge">${plural(ports.length, "open port")}</span>
+    </div>
+    <h3>Identity</h3>
+    <dl>
+      <dt>IP</dt><dd>${esc(h.ip)}</dd>
+      <dt>MAC</dt><dd>${h.mac ? esc(h.mac) : '<span class="none">unknown</span>'}</dd>
+      <dt>Vendor</dt><dd>${h.vendor ? esc(h.vendor) : '<span class="none">unknown</span>'}</dd>
+      <dt>Hostnames</dt><dd>${names}</dd>
+    </dl>
+    <h3>Discovered via</h3>
+    <div class="badges" style="margin-top:0">${sources}</div>
+    <h3>Open ports</h3>
+    ${ports.length ? ports.map(portCard).join("") : '<p class="empty">No open ports found.</p>'}
+    ${svcs.length ? `<h3>mDNS services</h3>${svcs.map(mdnsCard).join("")}` : ""}`;
+  $("back").onclick = showOverview;
+  $("panel").scrollTop = 0;
+}
+</script>
+</body>
+</html>
