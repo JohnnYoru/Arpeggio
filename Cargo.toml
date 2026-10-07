@@ -24,3 +24,6 @@ windows-sys = { version = "0.61.2", features = ["Win32_NetworkManagement_IpHelpe
 
 [target.'cfg(not(windows))'.dependencies]
 pnet = "0.35.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.190"

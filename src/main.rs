@@ -6,6 +6,8 @@ mod net;
 mod oui;
 mod ports;
 mod service;
+#[cfg(target_os = "linux")]
+mod syn;
 mod topology;
 
 use anyhow::Result;
@@ -35,9 +37,16 @@ struct Args {
     /// TCP connect timeout in milliseconds.
     #[arg(short, long, default_value_t = 1000)]
     timeout_ms: u64,
-    /// Maximum simultaneous connection attempts during the port scan.
+    /// Maximum simultaneous connection attempts during a connect scan.
     #[arg(long, default_value_t = 1000)]
     concurrency: usize,
+    /// Use a half-open SYN scan instead of TCP connect. Linux only, needs CAP_NET_RAW;
+    /// falls back to connect otherwise.
+    #[arg(long)]
+    syn: bool,
+    /// SYN probes per second. Lower it if a device drops packets under load.
+    #[arg(long, default_value_t = 10000)]
+    rate: u32,
     /// Output file (default: stdout).
     #[arg(short, long)]
     output: Option<PathBuf>,
@@ -45,6 +54,31 @@ struct Args {
 
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Runs the port scan, preferring a SYN scan when `--syn` is given and raw sockets work.
+/// Returns the open pairs and which method produced them.
+async fn port_scan(
+    args: &Args,
+    local_ip: std::net::Ipv4Addr,
+    ips: &[std::net::Ipv4Addr],
+    port_list: &[u16],
+    timeout: Duration,
+) -> (Vec<(std::net::Ipv4Addr, u16)>, &'static str) {
+    #[cfg(target_os = "linux")]
+    if args.syn {
+        let scan = tokio::task::block_in_place(|| syn::scan(local_ip, ips, port_list, args.rate));
+        match scan {
+            Ok(open) => return (open, "syn"),
+            Err(e) => eprintln!("[!] SYN scan unavailable ({e:#}); falling back to TCP connect"),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    if args.syn {
+        let _ = local_ip;
+        eprintln!("[!] SYN scan is only supported on Linux; using TCP connect");
+    }
+    (ports::scan(ips, port_list, timeout, args.concurrency).await, "connect")
 }
 
 #[tokio::main]
@@ -162,7 +196,7 @@ async fn main() -> Result<()> {
     let (port_kind, port_origin) = ports::port_list_source();
     eprintln!("[*] port list: {port_origin}");
     eprintln!("[*] scanning {} TCP ports on {} hosts", port_list.len(), ips.len());
-    let open = ports::scan(&ips, &port_list, timeout, args.concurrency).await;
+    let (open, scan_method) = port_scan(&args, net.ip, &ips, &port_list, timeout).await;
 
     // 5. Service detection.
     eprintln!("[*] fingerprinting {} open ports", open.len());
@@ -196,6 +230,7 @@ async fn main() -> Result<()> {
         "discovery": mode,
         "top_ports": port_list.len(),
         "port_list": port_kind,
+        "scan_method": scan_method,
     });
     let out = serde_json::to_string_pretty(&topology::build(&inv, &net.cidr.to_string(), scan))?;
     match args.output {

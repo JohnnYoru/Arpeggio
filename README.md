@@ -21,11 +21,11 @@ A scan runs in six stages:
    - mDNS reverse lookups
    - DNS-SD service browsing over mDNS
    - NetBIOS node status
-5. **Port scan.** A TCP connect scan of the top *N* ports (5000 by default), ranked by the frequency data of your local nmap install. Without nmap, Arpeggio scans a built-in list of about 1100 common ports instead. Hosts that are only known from caches or leases get scanned too, since they may be up and simply not answering discovery.
+5. **Port scan.** A TCP connect scan of the top *N* ports (5000 by default), ranked by the frequency data of your local nmap install. Without nmap, Arpeggio scans a built-in list of about 1100 common ports instead. Hosts that are only known from caches or leases get scanned too, since they may be up and simply not answering discovery. On Linux, `--syn` makes the scan half-open instead: a bare SYN per port, classified by the reply, which never completes a handshake.
 6. **Service detection** on every open port:
    - reads the passive banner (SSH, FTP, SMTP, POP3, IMAP, VNC, MySQL/MariaDB, Telnet, Redis…)
    - sends an HTTP probe and records the `Server` header and the page `<title>`
-   - attempts a TLS handshake and reads the certificate CN and SANs; any SAN that looks like a hostname is added to the host's names
+   - attempts a TLS handshake and reads the certificate CN and SANs; any name that looks like a fully qualified hostname is added to the host's names
    - if none of these works, falls back to the port's conventional name; these entries are marked `"detection": "port-table"`
 
 ## Building
@@ -59,22 +59,24 @@ Progress goes to stderr and the JSON goes to stdout, unless you pass `-o`.
 | `-c, --cidr` | interface network, narrowed to /24 | Network to scan. |
 | `-p, --top-ports` | `5000` | How many of the most common TCP ports to scan. |
 | `-t, --timeout-ms` | `1000` | TCP connect timeout. |
-| `--concurrency` | `1000` | Maximum simultaneous connection attempts. Lower it if a router starts dropping connections under load. |
+| `--concurrency` | `1000` | Maximum simultaneous connection attempts in a connect scan. Lower it if a router starts dropping connections under load. |
+| `--syn` | off | Use a half-open SYN scan instead of TCP connect. Linux only, needs `CAP_NET_RAW`; falls back to connect otherwise. |
+| `--rate` | `10000` | SYN probes per second in the first round; retries of unanswered ports go slower. Only used with `--syn`. |
 | `-o, --output` | stdout | Output file. |
 
 ### Privileges
 
-- **Linux.** The ARP sweep uses a raw socket, so it needs `CAP_NET_RAW`. You can grant that to the binary itself:
+- **Linux.** The ARP sweep and `--syn` use raw sockets, so they need `CAP_NET_RAW`. You can grant that to the binary itself:
 
   ```sh
   sudo setcap cap_net_raw+ep target/release/arpeggio
   ```
 
-  Rebuilding replaces the binary, so you have to run `setcap` again after every build. Without the capability, Arpeggio prints a warning and falls back to the TCP ping. Some DHCP lease files, such as NetworkManager's, are only readable by root and are skipped without an error.
+  Rebuilding replaces the binary, so you have to run `setcap` again after every build. Without the capability, Arpeggio prints a warning and falls back to the TCP ping and the connect scan. Some DHCP lease files, such as NetworkManager's, are only readable by root and are skipped without an error.
 
-- **Windows.** Discovery goes through the system's `SendARP`, so you don't need admin rights or Npcap. The ARP cache comes from `GetIpNetTable2`. Windows has no lease files, so for adapters configured by DHCP, Arpeggio uses the adapter's gateway and DNS servers instead.
+- **Windows.** Discovery goes through the system's `SendARP`, so you don't need admin rights or Npcap. `--syn` is not available and falls back to the connect scan. The ARP cache comes from `GetIpNetTable2`. Windows has no lease files, so for adapters configured by DHCP, Arpeggio uses the adapter's gateway and DNS servers instead.
 
-- **Other platforms.** If `/proc/net/route` is missing, interface detection falls back to the OS routing APIs. Discovery still uses the raw ARP sweep or the TCP ping fallback. This path has not been tested.
+- **Other platforms.** If `/proc/net/route` is missing, interface detection falls back to the OS routing APIs. Discovery still uses the raw ARP sweep or the TCP ping fallback. `--syn` is not available and falls back to the connect scan. This path has not been tested.
 
 > Only scan networks you own or are authorized to test.
 
@@ -93,7 +95,8 @@ The output is one JSON document. The `elements` object can be passed straight to
     "gateway": "192.168.0.1",
     "discovery": "arp",                // "arp" or "tcp" (fallback)
     "top_ports": 5000,
-    "port_list": "nmap"                // "nmap" (local install) or "builtin"
+    "port_list": "nmap",               // "nmap" (local install) or "builtin"
+    "scan_method": "connect"           // "connect" or "syn"
   },
   "elements": {
     "nodes": [
@@ -205,7 +208,7 @@ The device icons (router, computer, phone, printer, TV) are a best-effort guess.
 - Only TCP is scanned. UDP services are only seen through mDNS and NetBIOS.
 - Service detection is intentionally lightweight. It's a set of banner and HTTP/TLS probes, not a full nmap-style probe database.
 - On Windows, connections to closed ports can take noticeably longer to fail than on Linux, so the port scan runs slower there.
-- Some routers rate-limit bursts of connections. If you see results vary between runs, lower `--concurrency`.
+- Some routers rate-limit bursts of connections. A connect scan cannot tell a port refused under load from a genuinely closed one, so an overloaded device can hide open ports. If results vary between runs, lower `--concurrency` or try `--syn`.
 
 ## Third-party data
 
