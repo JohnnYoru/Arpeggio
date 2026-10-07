@@ -2,7 +2,13 @@
 
 A local network scanner written in Rust. Arpeggio detects the subnet you're on and collects every host it can find, both from the OS's caches and by scanning. It then resolves hostnames, scans the most common TCP ports, fingerprints the services behind them and writes the result as a [Cytoscape.js](https://js.cytoscape.org/) topology in JSON.
 
-![Arpeggio viewer showing a /24 network as a star topology, with a host list and open-port counts in the side panel](docs/screenshot.png)
+> Ports showing
+
+![Arpeggio viewer showing a /24 network as a star topology, with a host list and open-port counts in the side panel with ports](docs/screenshot-ports.png)
+
+> Ports hidden
+
+![Arpeggio viewer showing a /24 network as a star topology, with a host list and open-port counts in the side panel without ports](docs/screenshot-hidden-ports.png)
 
 ## How it works
 
@@ -188,7 +194,7 @@ Each host's `sources` array records every way that host was learned:
 `viewer/index.html` is a single static page that renders the JSON with Cytoscape.js.
 
 It has two parts:
-- a graph with device icons
+- a graph with device icons, where each host's open ports fan out around it as their own nodes; **Hide ports** (or `P`) toggles them
 - a side panel with each host's identity, open ports, certificates and mDNS services, plus a filter box
 
 You can load a scan in two ways:

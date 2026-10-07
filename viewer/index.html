@@ -35,6 +35,13 @@
   .search:focus { border-color: var(--border-strong); }
   .btn { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--text); color: var(--bg); font-weight: 500; cursor: pointer; white-space: nowrap; }
   .btn:hover { background: #ffffff; }
+  .btn.ghost { background: none; color: var(--text-2); border-color: var(--border); }
+  .btn.ghost:hover { background: var(--surface-2); color: var(--text); }
+  #toggle-ports { display: inline-flex; align-items: center; gap: 6px; }
+  #toggle-ports.hidden { display: none; }
+  #toggle-ports svg { width: 14px; height: 14px; flex: none; }
+  .btn:focus-visible, .search:focus-visible { outline: 2px solid var(--text-2); outline-offset: 2px; }
+  .btn.ghost[aria-pressed="true"] { border-color: var(--border-strong); color: var(--text); }
 
   main { flex: 1; display: flex; min-height: 0; }
   #graph { flex: 1; min-width: 0; position: relative; background: radial-gradient(circle at center, #1f1f1f 0%, var(--bg) 70%); }
@@ -84,7 +91,8 @@
   .hosts .ip { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
   .count { font-family: var(--mono); font-size: 11.5px; color: var(--muted); min-width: 2ch; text-align: right; }
 
-  .card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--surface); }
+  .card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--surface); transition: border-color .3s; }
+  .card.focus { border-color: var(--text-2); }
   .card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .port { font-family: var(--mono); font-weight: 600; font-size: 12.5px; }
   .svc { font-weight: 600; }
@@ -122,6 +130,7 @@
   <div class="meta" id="meta"></div>
   <div class="actions">
     <input class="search hidden" id="search" type="search" placeholder="Filter: IP, name, service, vendor…">
+    <button class="btn ghost hidden" id="toggle-ports" aria-pressed="true" title="Show or hide port nodes in the graph (P)"><svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-shut" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.9 8.3 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg><span>Hide ports</span></button>
     <button class="btn" id="open">Open JSON</button>
     <input type="file" id="file" accept=".json,application/json" hidden>
   </div>
@@ -139,6 +148,8 @@
       <span><i class="swatch" style="border:1.5px solid #ededed"></i>This machine</span>
       <span><i class="swatch" style="background:#262626;border:1px solid #5c5c5c"></i>Online</span>
       <span><i class="swatch" style="border:1px dashed #5c5c5c"></i>Offline (cache only)</span>
+      <span><i class="swatch" style="border-radius:3px;width:16px;border:1px solid #8a8a8a"></i>Open port</span>
+      <span><i class="swatch" style="border-radius:3px;width:16px;border:1px dashed #5c5c5c"></i>Port (guessed service)</span>
     </div>
     <div class="zoomhint hidden" id="zoomhint">Scroll to zoom · drag to pan · click a node</div>
   </div>
@@ -197,9 +208,9 @@ let cy = null, scan = null;
 // ---------- loading ----------
 function load(json) {
   if (!json?.elements?.nodes) throw new Error("this doesn't look like Arpeggio output");
-  scan = json;
+  scan = withPortNodes(json);
   $("drop").classList.add("hidden");
-  ["legend", "search", "zoomhint"].forEach((id) => $(id).classList.remove("hidden"));
+  ["legend", "search", "zoomhint", "toggle-ports"].forEach((id) => $(id).classList.remove("hidden"));
   $("search").value = "";
   renderMeta();
   document.fonts.ready.then(() => { renderGraph(); showOverview(); });
@@ -216,6 +227,41 @@ $("file").onchange = (e) => e.target.files[0] && readFile(e.target.files[0]);
 ["dragleave", "drop"].forEach((t) => document.addEventListener(t, (e) => { e.preventDefault(); $("drop").classList.remove("over"); }));
 document.addEventListener("drop", (e) => e.dataTransfer.files[0] && readFile(e.dataTransfer.files[0]));
 
+// Port nodes: newer JSON files already carry them (type "port", linked to their host by a
+// "port-link" edge). For older files without them, build the same nodes from each host's ports.
+function withPortNodes(json) {
+  const { nodes, edges } = json.elements;
+  if (nodes.some((n) => n.data.type === "port")) return json;
+  const extraNodes = [], extraEdges = [];
+  for (const { data: h } of nodes) {
+    for (const p of h.ports || []) {
+      const id = `port:${h.ip}:${p.protocol}/${p.port}`;
+      extraNodes.push({ data: { ...p, id, type: "port", host: h.id, ip: h.ip, label: `${p.port}/${p.protocol}\n${p.service || "?"}` } });
+      extraEdges.push({ data: { id: `edge:${id}`, source: h.id, target: id, type: "port-link" } });
+    }
+  }
+  return { ...json, elements: { ...json.elements, nodes: [...nodes, ...extraNodes], edges: [...(edges || []), ...extraEdges] } };
+}
+
+let portsVisible = true;
+function syncPortsButton() {
+  const b = $("toggle-ports");
+  b.setAttribute("aria-pressed", String(portsVisible));
+  b.querySelector("span").textContent = portsVisible ? "Hide ports" : "Show ports";
+  b.querySelector(".eye-open").style.display = portsVisible ? "" : "none";
+  b.querySelector(".eye-shut").style.display = portsVisible ? "none" : "";
+}
+function togglePorts() {
+  portsVisible = !portsVisible;
+  syncPortsButton();
+  if (cy) applyLayout(true);
+}
+$("toggle-ports").onclick = togglePorts;
+// "P" toggles ports too, unless typing in the filter.
+document.addEventListener("keydown", (e) => {
+  if ((e.key === "p" || e.key === "P") && !e.ctrlKey && !e.metaKey && !e.altKey && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName) && cy) togglePorts();
+});
+
 // ?src=scan.json loads a file served next to this page.
 const src = new URLSearchParams(location.search).get("src");
 if (src) fetch(src).then((r) => r.json()).then(load).catch((e) => alert(`Could not load ${src}: ${e.message}`));
@@ -229,18 +275,24 @@ function renderMeta() {
   const items = [
     ["Network", s.cidr], ["Interface", s.interface], ["Gateway", s.gateway || "—"],
     ["Discovery", { arp: "ARP", tcp: "TCP ping" }[s.discovery] || s.discovery],
-    ["Ports", s.top_ports ? `top ${s.top_ports}` : null], ["Scanned", when && when + dur],
+    ["Ports", s.top_ports ? `top ${s.top_ports}` : null],
+    ["Port scan", { syn: "SYN", connect: "TCP connect" }[s.scan_method] || s.scan_method],
+    ["Scanned", when && when + dur],
   ];
   $("meta").innerHTML = items.filter(([, v]) => v).map(([k, v]) => `<span>${k} <b>${esc(v)}</b></span>`).join("");
 }
 
 // ---------- graph ----------
 function hosts() {
-  return scan.elements.nodes.map((n) => n.data).filter((d) => d.type !== "subnet").sort((a, b) => ipNum(a.ip) - ipNum(b.ip));
+  return scan.elements.nodes.map((n) => n.data).filter((d) => d.type !== "subnet" && d.type !== "port").sort((a, b) => ipNum(a.ip) - ipNum(b.ip));
 }
 
 function nodeData(d) {
   if (d.type === "subnet") return { ...d, display: d.label, w: d.label.length * 7.6 + 30, h: 30 };
+  if (d.type === "port") {
+    const display = `${d.port} ${d.service || "?"}`;
+    return { ...d, display, guess: d.detection === "port-table", w: display.length * 6.4 + 14, h: 18 };
+  }
   const kind = deviceKind(d);
   const offline = d.status !== "online";
   const iconColor = d.type === "gateway" ? C.bg : offline ? C.faint : C.text2;
@@ -266,11 +318,19 @@ const STYLE = [
     "text-valign": "center", "text-margin-y": 0, "font-family": "JetBrains Mono, monospace", "font-size": 11.5, "color": C.text,
     "underlay-shape": "round-rectangle",
   } },
+  { selector: 'node[type="port"]', style: {
+    "shape": "round-rectangle", "background-color": C.bg, "background-image": "none", "border-color": C.muted,
+    "text-valign": "center", "text-margin-y": 0, "font-family": "JetBrains Mono, monospace", "font-size": 9.5, "color": C.text2,
+    "underlay-shape": "round-rectangle", "underlay-padding": 4,
+  } },
+  { selector: 'node[type="port"][?tls]', style: { "border-color": C.text, "border-width": 1.5 } },
+  { selector: 'node[type="port"][?guess]', style: { "border-style": "dashed", "border-color": C.faint, "color": C.muted } },
   { selector: 'node[status="offline"]', style: { "background-color": C.bg, "border-style": "dashed", "border-color": C.faint, "color": C.muted } },
   { selector: "node.hover", style: { "underlay-opacity": 0.06 } },
   { selector: "node:selected", style: { "underlay-opacity": 0.14, "border-color": C.text, "border-width": 1.5 } },
   { selector: 'node[type="self"]:selected', style: { "border-width": 2 } },
   { selector: "edge", style: { "width": 1, "line-color": C.edge, "curve-style": "straight", "transition-property": "line-color, opacity", "transition-duration": "120ms" } },
+  { selector: 'edge[type="port-link"]', style: { "width": 0.75, "line-color": "#2b2b2b" } },
   { selector: "edge.hl", style: { "line-color": C.edgeHi } },
   { selector: ".faded", style: { "opacity": 0.1 } },
 ];
@@ -278,27 +338,132 @@ const STYLE = [
 const RING = 16; // hosts per ring; larger networks get more concentric rings
 
 function renderGraph() {
-  // Gateway and this machine first (inner ring), then everything else by IP.
-  const order = hosts().sort((a, b) => (a.type === "host") - (b.type === "host"));
-  const ring = new Map(order.map((h, i) => [h.id, Math.floor(i / RING)]));
   const elements = { nodes: scan.elements.nodes.map(({ data }) => ({ data: nodeData(data) })), edges: scan.elements.edges };
   if (cy) cy.destroy();
   cy = cytoscape({
     container: $("cy"), elements, style: STYLE, minZoom: 0.15, maxZoom: 4, boxSelectionEnabled: false,
     // Render at ≥2× density so labels stay crisp on 1× and fractional-scaling displays.
     pixelRatio: Math.max(2, window.devicePixelRatio || 1),
-    layout: {
-      name: "concentric", padding: 48, minNodeSpacing: 52, levelWidth: () => 1, animate: false,
-      // Star: the subnet in the middle, hosts on rings around it.
-      concentric: (n) => (n.data("type") === "subnet" ? 1 : -ring.get(n.id())),
-    },
   });
-  if (cy.zoom() > 1.3) { cy.zoom(1.3); cy.center(); }
+  syncPortsButton();
+  applyLayout(false);
 
   cy.on("mouseover", "node", (e) => { e.target.addClass("hover"); $("cy").style.cursor = "pointer"; });
   cy.on("mouseout", "node", (e) => { e.target.removeClass("hover"); $("cy").style.cursor = ""; });
-  cy.on("tap", "node", (e) => (e.target.data("type") === "subnet" ? showOverview() : showHost(e.target.id())));
+  cy.on("tap", "node", (e) => {
+    const d = e.target.data();
+    if (d.type === "subnet") showOverview();
+    else if (d.type === "port") showHost(d.host, d.id);
+    else showHost(d.id);
+  });
   cy.on("tap", (e) => { if (e.target === cy) showOverview(); });
+  // Dragging a host carries its ports along.
+  let dragFrom = null;
+  cy.on("grab", "node", (e) => { dragFrom = { ...e.target.position() }; });
+  cy.on("drag", "node", (e) => {
+    const n = e.target, p = n.position();
+    if (!dragFrom || n.data("type") === "port" || n.data("type") === "subnet") return;
+    const dx = p.x - dragFrom.x, dy = p.y - dragFrom.y;
+    cy.nodes(`[type="port"][host="${n.id()}"]`).forEach((pt) => { pt.position({ x: pt.position("x") + dx, y: pt.position("y") + dy }); });
+    dragFrom = { ...p };
+  });
+  cy.on("free", "node", () => { dragFrom = null; });
+}
+
+// Computes every node's position for the current port visibility, then either jumps there
+// (first render) or animates there (when ports are toggled).
+function applyLayout(animate) {
+  const portEls = cy.elements('node[type="port"], edge[type="port-link"]');
+  const showPorts = portsVisible && portEls.nonempty();
+  const before = new Map(cy.nodes().map((n) => [n.id(), { ...n.position() }]));
+
+  if (showPorts) portEls.style("display", "element");
+  placeHosts(showPorts);
+  if (showPorts) placePorts();
+  else {
+    // Tuck hidden ports onto their host so they grow out of it when shown again.
+    cy.nodes('[type="port"]').forEach((p) => { const h = cy.getElementById(p.data("host")); if (h.nonempty()) p.position({ ...h.position() }); });
+  }
+  const visible = showPorts ? cy.elements() : cy.elements().not(portEls);
+
+  if (!animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (!showPorts) portEls.style("display", "none");
+    cy.fit(visible, 48);
+    if (cy.zoom() > 1.3) { cy.zoom(1.3); cy.center(visible); }
+    return;
+  }
+  const after = new Map(cy.nodes().map((n) => [n.id(), { ...n.position() }]));
+  cy.nodes().forEach((n) => n.position(before.get(n.id())));
+  // Fit target is worked out from the final positions.
+  cy.nodes().forEach((n) => n.position(after.get(n.id())));
+  const bb = visible.boundingBox();
+  cy.nodes().forEach((n) => n.position(before.get(n.id())));
+  const w = cy.width() - 96, h = cy.height() - 96;
+  const zoom = Math.min(1.3, w / bb.w, h / bb.h);
+  const pan = { x: cy.width() / 2 - zoom * (bb.x1 + bb.w / 2), y: cy.height() / 2 - zoom * (bb.y1 + bb.h / 2) };
+  const dur = 380, easing = "ease-in-out-cubic";
+  cy.nodes().forEach((n) => n.animate({ position: after.get(n.id()) }, { duration: dur, easing }));
+  cy.animate({ zoom, pan }, { duration: dur, easing, complete: () => { if (!showPorts) portEls.style("display", "none"); } });
+}
+
+// Star: the subnet in the middle, hosts on rings around it, gateway and this machine first
+// (at the top), everything else clockwise by IP. With ports shown, hosts with more ports get
+// a wider slice of the ring so their fans don't run into their neighbours'.
+function placeHosts(showPorts) {
+  const order = hosts().sort((a, b) => (a.type === "host") - (b.type === "host"));
+  const center = { x: 0, y: 0 };
+  cy.nodes('[type="subnet"]').position(center);
+  const nPorts = (h) => cy.nodes(`[type="port"][host="${h.id}"]`).length;
+  for (let k = 0; k * RING < order.length; k++) {
+    const ring = order.slice(k * RING, (k + 1) * RING);
+    const weight = ring.map((h) => (showPorts ? 1 + 0.3 * Math.min(nPorts(h), 14) : 1));
+    const total = weight.reduce((a, b) => a + b, 0);
+    // Each host claims some room along the ring (more for busy hosts); the ring is just big enough.
+    const room = ring.reduce((sum, h) => sum + (showPorts ? 80 + 18 * Math.min(nPorts(h), 14) : 125), 0);
+    const R = Math.max(showPorts ? 200 : 150, room / (2 * Math.PI)) + k * (showPorts ? 260 : 120);
+    let a = -Math.PI / 2 - (weight[0] / total) * Math.PI + (k % 2) * 0.3;
+    ring.forEach((h, i) => {
+      const mid = a + (weight[i] / total) * Math.PI;
+      cy.getElementById(h.id).position({ x: center.x + R * Math.cos(mid), y: center.y + R * Math.sin(mid) });
+      a += (weight[i] / total) * 2 * Math.PI;
+    });
+  }
+}
+
+// Fan each host's ports out on a wide arc pointing away from the subnet, in port order.
+// Each port starts close to its host and steps outward until it no longer overlaps a host,
+// a host's label, or a port already placed, so crowded fans become a staggered staircase.
+function placePorts() {
+  const center = cy.nodes('[type="subnet"]').position() || { x: 0, y: 0 };
+  const GAP = 5;
+  const boxes = cy.nodes().not('[type="port"]').map((n) => {
+    const b = n.boundingBox({ includeLabels: true, includeOverlays: false });
+    return { x1: b.x1 - GAP, y1: b.y1 - GAP, x2: b.x2 + GAP, y2: b.y2 + GAP };
+  });
+  const hits = (b) => boxes.some((o) => b.x1 < o.x2 && b.x2 > o.x1 && b.y1 < o.y2 && b.y2 > o.y1);
+  const groups = new Map();
+  cy.nodes('[type="port"]').forEach((p) => { const k = p.data("host"); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(p); });
+  // Busiest hosts first, so they get first pick of the space around them.
+  [...groups.entries()].sort((a, b) => b[1].length - a[1].length).forEach(([hostId, ports]) => {
+    const host = cy.getElementById(hostId);
+    if (host.empty()) return;
+    ports.sort((a, b) => a.data("port") - b.data("port"));
+    const hp = host.position();
+    const out = Math.atan2(hp.y - center.y, hp.x - center.x);
+    const n = ports.length;
+    const step = n > 1 ? Math.min(0.4, 2.9 / (n - 1)) : 0;  // ~23° apart, whole fan ≤ ~165°
+    ports.forEach((p, i) => {
+      const a = out + (i - (n - 1) / 2) * step;
+      const w = p.data("w") + 8, h = p.data("h") + 8;  // + underlay padding
+      let r = 88 + Math.max(0, n - 5) * 5, pos;
+      for (; r < 700; r += 6) {
+        pos = { x: hp.x + r * Math.cos(a), y: hp.y + r * Math.sin(a) };
+        const b = { x1: pos.x - w / 2 - GAP, y1: pos.y - h / 2 - GAP, x2: pos.x + w / 2 + GAP, y2: pos.y + h / 2 + GAP };
+        if (!hits(b)) { boxes.push(b); break; }
+      }
+      p.position(pos);
+    });
+  });
 }
 
 // Cytoscape's built-in wheel zoom moves ~3% per mouse-wheel notch. Replace it with a steady
@@ -320,12 +485,16 @@ $("search").addEventListener("input", (e) => {
   cy.batch(() => {
     cy.nodes().forEach((n) => {
       const d = n.data();
-      const hay = [d.ip, d.mac, d.vendor, KIND_LABEL[d.kind], ...(d.hostnames || []),
+      const hay = d.type === "port" ? [d.ip, String(d.port), d.protocol, d.service, d.product, d.version, d.info].join(" ").toLowerCase() : [d.ip, d.mac, d.vendor, KIND_LABEL[d.kind], ...(d.hostnames || []),
         ...(d.ports || []).flatMap((p) => [String(p.port), p.service, p.product, p.info]),
         ...(d.mdns_services || []).flatMap((s) => [s.instance, s.service])].join(" ").toLowerCase();
       n.toggleClass("faded", Boolean(q) && d.type !== "subnet" && !hay.includes(q));
     });
-    cy.edges().forEach((ed) => ed.toggleClass("faded", ed.source().hasClass("faded")));
+    // Keep a host visible when one of its ports matches.
+    cy.nodes('[type="port"]').forEach((p) => {
+      if (!p.hasClass("faded")) cy.getElementById(p.data("host")).removeClass("faded");
+    });
+    cy.edges().forEach((ed) => ed.toggleClass("faded", ed.source().hasClass("faded") || ed.target().hasClass("faded")));
   });
 });
 
@@ -362,11 +531,11 @@ function showOverview() {
   $("panel").querySelectorAll("li[data-id]").forEach((li) => (li.onclick = () => showHost(li.dataset.id)));
 }
 
-function portCard(p) {
+function portCard(p, hostIp) {
   const ver = [p.product, p.version].filter(Boolean).join(" ");
   const cert = p.cert && (p.cert.subject_cn || p.cert.sans?.length)
     ? `<div class="kv">cert ${esc(p.cert.subject_cn || "—")}${p.cert.sans?.length ? " · SAN " + esc(p.cert.sans.join(", ")) : ""}</div>` : "";
-  return `<div class="card">
+  return `<div class="card" data-port="${esc(`port:${hostIp}:${p.protocol}/${p.port}`)}">
     <div class="card-head">
       <span class="port">${p.port}/${esc(p.protocol)}</span>
       <span class="svc">${esc(p.service)}</span>
@@ -391,7 +560,7 @@ function mdnsCard(s) {
   </div>`;
 }
 
-function showHost(id) {
+function showHost(id, portId) {
   const node = cy.getElementById(id);
   const h = node.data();
   select(node);
@@ -423,10 +592,18 @@ function showHost(id) {
     <h3>Discovered via</h3>
     <div class="badges" style="margin-top:0">${sources}</div>
     <h3>Open ports</h3>
-    ${ports.length ? ports.map(portCard).join("") : '<p class="empty">No open ports found.</p>'}
+    ${ports.length ? ports.map((p) => portCard(p, h.ip)).join("") : '<p class="empty">No open ports found.</p>'}
     ${svcs.length ? `<h3>mDNS services</h3>${svcs.map(mdnsCard).join("")}` : ""}`;
   $("back").onclick = showOverview;
   $("panel").scrollTop = 0;
+  if (portId) {
+    const card = [...$("panel").querySelectorAll(".card[data-port]")].find((c) => c.dataset.port === portId);
+    if (card) {
+      card.classList.add("focus");
+      card.scrollIntoView({ block: "center" });
+      cy.getElementById(portId).select();
+    }
+  }
 }
 </script>
 </body>
